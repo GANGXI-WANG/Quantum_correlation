@@ -1,3 +1,4 @@
+```mermaid
 graph TD
     %% 定义全局样式：黑白线条，无阴影，符合专利风格
     classDef default fill:#fff,stroke:#000,stroke-width:2px;
