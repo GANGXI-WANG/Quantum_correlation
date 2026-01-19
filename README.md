@@ -4,7 +4,7 @@ This project implements a simulation of a two-ion spin-boson model in a trapped-
 
 ## Features
 
-- **Ion Chain Simulation**: Calculates equilibrium positions and transverse normal modes for a chain of $N=20$ $^{171}\mathrm{Yb}^+$ ions in an anharmonic axial potential.
+- **Ion Chain Simulation**: Calculates equilibrium positions and transverse normal modes for a linear $^{171}\mathrm{Yb}^+$ ion chain.
 - **Spin-Boson Physics**:
   - Calculates the mode-resolved spin-phonon coupling matrix $J_{ij}(\omega)$.
   - Constructs the Hamiltonian for a chosen pair of spins coupled to the phonon bath.
@@ -36,12 +36,12 @@ python src/main.py
 ```
 
 This will perform the following steps:
-1.  Initialize the ion chain ($N=20$) and calculate modes scaled to the 2.133-2.406 MHz band.
-2.  Compute and plot coupling matrices $J_{ij}$ for "dense" and "sparse" spectral regimes.
-    - Output: `J_ij_heatmaps.png`
-3.  Simulate the time evolution of two central ions initialized in $|e,g\rangle$.
+1.  Initialize the ion chain using provided experimental data ($N=10$, specific distances and frequencies).
+2.  Compute and plot the coupling matrix $J_{ij}$ at the center of the phonon band.
+    - Output: `J_ij_10ions.png`
+3.  Simulate the time evolution of the two central ions (indices 4 and 5) initialized in $|e,g\rangle$.
 4.  Compute quantum correlations and plot them.
-    - Output: `Dynamics.png`
+    - Output: `Dynamics_10ions.png`
 
 ## Physics Model
 
@@ -51,7 +51,7 @@ $$
 H = \sum_{k} \omega_k a_k^{\dagger} a_k + \frac{\Delta}{2}\sum_{i} \sigma_{i,z} + \Omega \sum_{i,k} \eta_k b_{k,i} (\sigma^{+}_{i} a_k + \sigma^{-}_{i} a_k^{\dagger})
 $$
 
-We model the transverse modes of the linear chain, which naturally exhibit a high density of states near the Center-of-Mass (COM) mode at the top of the frequency band. This matches the "dense" regime description provided.
+The simulation uses transverse phonon modes derived from the provided ion distances and frequencies.
 
 ## File Structure
 

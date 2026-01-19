@@ -69,7 +69,10 @@ class SpinBosonSystem:
         # factor = 2 * eta_k * Omega
         factor = 2 * self.eta_k * self.Omega
         factor_cubed = np.abs(factor)**3
-        factor_sq = np.abs(factor)**2
+
+        # Denominator linewidth term: 2(eta Omega)^2 |b b|
+        # This is 0.5 * (2 eta Omega)^2 = 0.5 * factor^2
+        broadening_factor = 2 * (self.eta_k * self.Omega)**2
 
         b = self.mode_vecs # Shape (N_ions, N_modes)
         w_k = self.mode_freqs
@@ -82,9 +85,7 @@ class SpinBosonSystem:
                 abs_prod_b = np.abs(prod_b)
 
                 numerator = (factor_cubed * abs_prod_b**(1.5)) / np.sqrt(2)
-                denominator = (omega - w_k)**2 + factor_sq * abs_prod_b
-                # Note: denominator "2(eta Omega)^2 |b b|" implies gamma^2 = that.
-                # Just implementing the formula as written.
+                denominator = (omega - w_k)**2 + broadening_factor * abs_prod_b
 
                 J[i, j] = np.sum(numerator / denominator)
 

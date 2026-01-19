@@ -16,16 +16,10 @@ def concurrence(rho):
     Concurrence for 2 qubits.
     rho is 4x4 in basis ee, eg, ge, gg.
     """
-    # Spin flip operator Y x Y
     sy = np.array([[0, -1j], [1j, 0]])
     sy_sy = np.kron(sy, sy)
 
     rho_tilde = np.dot(np.dot(sy_sy, rho.conj()), sy_sy)
-
-    # Eigenvalues of R = rho * rho_tilde
-    # Or singular values of sqrt(rho) * sqrt(rho_tilde)
-    # More stably: eigenvalues of R = sqrt(sqrt(rho) rho_tilde sqrt(rho))
-    # But usually just eigenvalues of rho * rho_tilde is fine if rho is positive.
 
     R = np.dot(rho, rho_tilde)
     evals = np.sort(np.sqrt(np.abs(np.linalg.eigvals(R))))[::-1]
@@ -45,21 +39,7 @@ def eof(rho):
     return -x * np.log2(x) - (1-x) * np.log2(1-x)
 
 def quantum_discord(rho):
-    """
-    Quantum Discord QD(B|A) or A|B?
-    Text says: QD_B(rho) = I(rho_AB) - max J_B(rho)
-    J_B = S(A) - sum p_k S(A|k)
-    Optimization over rank-1 POVM on B.
-    """
-    # Partial trace
-    # Basis: ee(0), eg(1), ge(2), gg(3)
-    # A is first qubit (rows 0,1 vs 2,3), B is second (cols 0,2 vs 1,3) inside blocks.
-    # Actually, kron is usually A x B.
-    # 0 (ee) -> 00
-    # 1 (eg) -> 01
-    # 2 (ge) -> 10
-    # 3 (gg) -> 11
-
+    """Quantum Discord."""
     rho_A = np.trace(rho.reshape(2,2,2,2), axis1=1, axis2=3)
     rho_B = np.trace(rho.reshape(2,2,2,2), axis1=0, axis2=2)
 
@@ -69,15 +49,12 @@ def quantum_discord(rho):
 
     I_AB = S_A + S_B - S_AB
 
-    # Optimization over Projective Measurements on B
-    # Direction n = (sin theta cos phi, sin theta sin phi, cos theta)
-    # Projectors |+n><+n|, |-n><-n|
-
-    # We scan theta, phi
     min_conditional_entropy = 100
 
     thetas = np.linspace(0, np.pi, 10)
     phis = np.linspace(0, 2*np.pi, 10)
+
+    I2 = np.eye(2)
 
     for theta in thetas:
         for phi in phis:
@@ -87,16 +64,9 @@ def quantum_discord(rho):
 
             sigma_n = nx*np.array([[0,1],[1,0]]) + ny*np.array([[0,-1j],[1j,0]]) + nz*np.array([[1,0],[0,-1]])
 
-            # Eigenvectors of n.sigma
-            # easier: Projectors
-            # P0 = (I + n.sigma)/2
-            # P1 = (I - n.sigma)/2
-
-            I2 = np.eye(2)
             P0 = (I2 + sigma_n)/2
             P1 = (I2 - sigma_n)/2
 
-            # Measurement on B: I x P0, I x P1
             M0 = np.kron(I2, P0)
             M1 = np.kron(I2, P1)
 
@@ -121,121 +91,89 @@ def quantum_discord(rho):
 
     J_B = S_A - min_conditional_entropy
     QD = I_AB - J_B
-    return max(0, QD) # Can be negative due to numerics, clamp to 0
+    return max(0, QD)
 
 def run_simulation():
-    # Parameters
-    N = 20
-    f_min = 2.133e6
-    f_max = 2.406e6
+    # 10-Ion Parameters provided by user
+    dz = [6.0019812,5.15572782,4.72673127,4.54681994,4.47707492,4.54681994,4.72673127,5.15572782,6.0019812]
+    omegas = 2*np.pi*np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
 
-    omega_dense = 2.39569e6
-    omega_sparse = 2.17681e6
+    Omega = 2 * np.pi * 400e3 # 400 kHz in rad/s
+    eta = 0.06 # Constant eta
 
-    Omega = 10e3 # 10 kHz Rabi frequency (adjust to see dynamics)
-    # The text mentions max J ~ 10^4.
-    # J ~ eta^2 Omega.
-    # If eta ~ 0.1, Omega ~ 1 MHz => J ~ 10 kHz.
+    print("Initializing 10-Ion Chain...")
+    chain = LinearChain.from_data(dz, omegas)
+    chain.compute_transverse_modes() # Compute eigenvectors
 
-    print("Initializing Ion Chain...")
-    chain = LinearChain(N=N, alpha=0.002) # Adjusted alpha
-    chain.compute_transverse_modes()
-    chain.get_scaled_modes(f_min, f_max)
+    # Select probe frequency for heatmap
+    # We choose something within the band or slightly detuned.
+    # Center of band:
+    w_center = np.mean(omegas)
 
-    # 1. Heatmaps
-    print("Generating J_ij Heatmaps...")
+    print("Generating J_ij Heatmap...")
+    sys = SpinBosonSystem(chain, w_center, Omega)
+    # Manually overwrite eta_k to be constant 0.06 as per user request
+    sys.eta_k = np.full(chain.N, eta)
 
-    sys_dense = SpinBosonSystem(chain, omega_dense, Omega)
-    sys_sparse = SpinBosonSystem(chain, omega_sparse, Omega)
+    J = sys.calculate_coupling_matrix(w_center)
 
-    J_dense = sys_dense.calculate_coupling_matrix(omega_dense)
-    J_sparse = sys_sparse.calculate_coupling_matrix(omega_sparse)
+    # Plot J_ij
+    plt.figure(figsize=(6, 5))
+    plt.imshow(J, cmap='viridis', origin='lower')
+    plt.title(r'Coupling Matrix $J_{ij}$ at Center of Band' + '\n' + r'(10 Ions, $\Omega$=400kHz, $\eta$=0.06)')
+    plt.colorbar(label='Strength (rad/s?)')
+    plt.xlabel('Ion Index')
+    plt.ylabel('Ion Index')
+    plt.savefig('J_ij_10ions.png')
+    print("Saved J_ij_10ions.png")
 
-    # Plot
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-
-    im1 = axes[0].imshow(J_dense, cmap='viridis', origin='lower')
-    axes[0].set_title(f'Dense Regime ({(omega_dense/1e6):.4f} MHz)')
-    plt.colorbar(im1, ax=axes[0])
-
-    im2 = axes[1].imshow(J_sparse, cmap='viridis', origin='lower')
-    axes[1].set_title(f'Sparse Regime ({(omega_sparse/1e6):.4f} MHz)')
-    plt.colorbar(im2, ax=axes[1])
-
-    plt.savefig('J_ij_heatmaps.png')
-    print("Saved J_ij_heatmaps.png")
-
-    # 2. Dynamics
+    # Dynamics
     print("Simulating Dynamics...")
-    # Center ions
-    ions = [9, 10]
+    # Select two ions: 4 and 5 (indices, 0-based) - The middle pair
+    ions = [4, 5]
 
-    # Time evolution
-    t_max = 200e-6 # 200 us
+    # Set Delta resonant with a mode? Or detuned?
+    # Usually we want resonance to see exchange.
+    # Let's set Delta to the COM mode frequency (highest)
+    sys.Delta = omegas[0]
+
+    t_max = 50e-6 # 50 us
     t_points = np.linspace(0, t_max, 100)
 
-    # We need to set Delta such that we are probing the modes.
-    # Usually Delta approx omega_phonon.
-    # The text says "laser detuning... Delta".
-    # And H = Delta/2 sigma_z + ...
-    # If we want resonance, Delta ~ omega_k.
-    # So we set Delta = omega_dense for dense case, etc.
+    rhos = sys.simulate_dynamics(ions, t_points)
 
-    sys_dense.Delta = omega_dense
-    sys_sparse.Delta = omega_sparse
+    # Analyze
+    C12_vals = []
+    EoF_vals = []
+    QD_vals = []
 
-    rhos_dense = sys_dense.simulate_dynamics(ions, t_points)
-    rhos_sparse = sys_sparse.simulate_dynamics(ions, t_points)
+    for rho in rhos:
+        # C12 = <z1 z2> - <z1><z2>
+        z1_exp = rho[0,0] + rho[1,1] - rho[2,2] - rho[3,3]
+        z2_exp = rho[0,0] - rho[1,1] + rho[2,2] - rho[3,3]
+        z1z2_exp = rho[0,0] - rho[1,1] - rho[2,2] + rho[3,3]
 
-    # Calculate Observables
-    def analyze(rhos):
-        C12 = []
-        EoF_vals = []
-        QD_vals = []
-        for rho in rhos:
-            # C12 = <z1 z2> - <z1><z2>
-            # z1 = |e><e| - |g><g| tensor I
-            # z2 = I tensor |e><e| - |g><g|
-            # Basis: ee, eg, ge, gg
-            # z1: 1, 1, -1, -1
-            # z2: 1, -1, 1, -1
-            # z1z2: 1, -1, -1, 1
-
-            z1_exp = rho[0,0] + rho[1,1] - rho[2,2] - rho[3,3]
-            z2_exp = rho[0,0] - rho[1,1] + rho[2,2] - rho[3,3]
-            z1z2_exp = rho[0,0] - rho[1,1] - rho[2,2] + rho[3,3]
-
-            C12.append(np.real(z1z2_exp - z1_exp*z2_exp))
-            EoF_vals.append(eof(rho))
-            QD_vals.append(quantum_discord(rho))
-        return C12, EoF_vals, QD_vals
-
-    C_d, E_d, Q_d = analyze(rhos_dense)
-    C_s, E_s, Q_s = analyze(rhos_sparse)
+        C12_vals.append(np.real(z1z2_exp - z1_exp*z2_exp))
+        EoF_vals.append(eof(rho))
+        QD_vals.append(quantum_discord(rho))
 
     # Plot Dynamics
     fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
-    axes[0].plot(t_points*1e6, C_d, label='Dense', color='r')
-    axes[0].plot(t_points*1e6, C_s, label='Sparse', color='b')
+    axes[0].plot(t_points*1e6, C12_vals, color='b')
     axes[0].set_ylabel('C_12')
-    axes[0].legend()
-    axes[0].set_title('Connected Correlator')
+    axes[0].set_title('Connected Correlator (Ions 4 & 5)')
 
-    axes[1].plot(t_points*1e6, E_d, label='Dense', color='r')
-    axes[1].plot(t_points*1e6, E_s, label='Sparse', color='b')
+    axes[1].plot(t_points*1e6, EoF_vals, color='g')
     axes[1].set_ylabel('Entanglement of Formation')
-    axes[1].set_title('Entanglement')
 
-    axes[2].plot(t_points*1e6, Q_d, label='Dense', color='r')
-    axes[2].plot(t_points*1e6, Q_s, label='Sparse', color='b')
+    axes[2].plot(t_points*1e6, QD_vals, color='r')
     axes[2].set_ylabel('Quantum Discord')
     axes[2].set_xlabel('Time (us)')
-    axes[2].set_title('Quantum Discord')
 
     plt.tight_layout()
-    plt.savefig('Dynamics.png')
-    print("Saved Dynamics.png")
+    plt.savefig('Dynamics_10ions.png')
+    print("Saved Dynamics_10ions.png")
 
 if __name__ == "__main__":
     run_simulation()

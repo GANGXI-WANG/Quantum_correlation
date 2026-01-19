@@ -18,6 +18,42 @@ class LinearChain:
         self.modes = None
         self.frequencies = None
         self.eigenvectors = None
+        self.raw_evals = None
+        self.raw_evecs = None
+
+    @classmethod
+    def from_data(cls, dz, omegas):
+        """
+        Initialize chain from inter-ion distances and mode frequencies.
+
+        Args:
+            dz (list or np.array): Distances between adjacent ions (length N-1).
+            omegas (list or np.array): Mode frequencies (length N).
+        """
+        N = len(dz) + 1
+        if len(omegas) != N:
+            raise ValueError(f"Number of frequencies ({len(omegas)}) must equal number of ions ({N}) implied by dz.")
+
+        instance = cls(N=N)
+
+        # Calculate positions centered at 0
+        z = np.zeros(N)
+        # z[0] is arbitrary, fix later to center
+        current_z = 0.0
+        z[0] = 0.0
+        for i, d in enumerate(dz):
+            current_z += d
+            z[i+1] = current_z
+
+        # Center
+        center = (z[0] + z[-1]) / 2.0
+        instance.positions = z - center
+
+        # Store frequencies
+        # User provided omegas might be sorted high to low.
+        instance.frequencies = np.array(omegas)
+
+        return instance
 
     def potential(self, u):
         """
@@ -128,7 +164,33 @@ class LinearChain:
         self.raw_evals = evals
         self.raw_evecs = evecs
 
+        # If we have pre-assigned frequencies (via from_data), we need to pair them.
+        if self.frequencies is not None:
+             self._pair_modes_with_frequencies()
+
         return evals, evecs
+
+    def _pair_modes_with_frequencies(self):
+        """
+        Pair the calculated eigenvectors with the stored frequencies.
+        Transverse physics: Smallest eigenvalue (stiffest repulsion diff) -> Highest Frequency.
+        Actually, Transverse freq^2 = w_trap^2 - const * eigenvalue.
+        So Small eigenvalue -> Large frequency.
+        """
+        if self.frequencies is None or self.raw_evals is None:
+            return
+
+        # Sort eigenvectors by eigenvalue (ascending)
+        # raw_evals and raw_evecs are already sorted ascending by eigh.
+
+        # Sort provided frequencies descending (Highest freq corresponds to Lowest eigenvalue)
+        sorted_freqs = np.sort(self.frequencies)[::-1]
+
+        self.frequencies = sorted_freqs
+        # self.raw_evecs corresponds to eigenvalues Ascending.
+        # so raw_evecs[:, 0] corresponds to Lowest eigenvalue -> Highest Frequency.
+
+        self.eigenvectors = self.raw_evecs
 
     def get_scaled_modes(self, f_min, f_max):
         """
