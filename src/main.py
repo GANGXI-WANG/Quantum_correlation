@@ -163,8 +163,8 @@ def run_simulation():
     # Let's set Delta to the COM mode frequency (highest)
     sys.Delta = omegas[0]
 
-    t_max = 50e-6 # 50 us
-    t_points = np.linspace(0, t_max, 100)
+    t_max = 300e-6 # 300 us
+    t_points = np.linspace(0, t_max, 300)
 
     rhos = sys.simulate_dynamics(ions, t_points)
 
@@ -186,16 +186,25 @@ def run_simulation():
     # Plot Dynamics
     fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
-    axes[0].plot(t_points*1e6, C12_vals, color='b')
-    axes[0].set_ylabel('C_12')
-    axes[0].set_title('Connected Correlator (Ions 4 & 5)')
+    # 1. Connected Correlator (Measurable in Experiment)
+    axes[0].plot(t_points*1e6, C12_vals, color='b', label=r'$C_{zz} = \langle \sigma_z^1 \sigma_z^2 \rangle - \langle \sigma_z^1 \rangle \langle \sigma_z^2 \rangle$')
+    axes[0].set_ylabel(r'$C_{zz}$')
+    axes[0].set_title(r'Experimentally Measurable Correlation ($C_{zz}$)')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
 
+    # 2. Entanglement of Formation
     axes[1].plot(t_points*1e6, EoF_vals, color='g')
     axes[1].set_ylabel('Entanglement of Formation')
+    axes[1].set_title('Quantum Entanglement')
+    axes[1].grid(True, alpha=0.3)
 
+    # 3. Quantum Discord
     axes[2].plot(t_points*1e6, QD_vals, color='r')
     axes[2].set_ylabel('Quantum Discord')
-    axes[2].set_xlabel('Time (us)')
+    axes[2].set_xlabel(r'Time ($\mu$s)')
+    axes[2].set_title('Quantum Discord (Total Non-Classical Correlation)')
+    axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig('Dynamics_10ions.png')
