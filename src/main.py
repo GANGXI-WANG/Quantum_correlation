@@ -103,11 +103,37 @@ def run_simulation():
 
     print("Initializing 10-Ion Chain...")
     chain = LinearChain.from_data(dz, omegas)
-    chain.compute_transverse_modes() # Compute eigenvectors
+
+    # Calculate modes using the specific omx from external code logic
+    # omx = max(omega) - shift
+    shift = 2.0 * np.pi * 240.0203e3
+    omx_external = np.max(omegas) - shift
+
+    # Compute modes with this omx to get the correct b_jk
+    # The frequencies returned will be the calculated ones (small), but we will overwrite them
+    # with the provided 'omegas' (large) as per LinearChain.from_data logic which stores them.
+    # Actually from_data stores 'omegas' in chain.frequencies.
+    # compute_transverse_modes overwrites them?
+    # No, my updated compute_transverse_modes calculates raw_freqs but doesn't overwrite self.frequencies unless we ask it to.
+    # Wait, let's check LinearChain again.
+    # It stores raw_freqs.
+    # But SpinBosonSystem uses chain.frequencies.
+    # We should ensure chain.frequencies is the provided 'omegas', but chain.eigenvectors is the calculated one.
+
+    chain.compute_transverse_modes(omx_external)
+    # LinearChain.get_modes() returns calculated freqs.
+    # We want to keep the PROVIDED frequencies.
+    # But we want the CALCULATED eigenvectors.
+    # And we need to ensure they are sorted consistently (High to Low).
+    # My LinearChain.get_modes returns High to Low.
+    # And the provided omegas are High to Low.
+    # So we just take the eigenvectors from get_modes and assign them to the chain.
+
+    _, evecs = chain.get_modes()
+    chain.eigenvectors = evecs
+    # chain.frequencies is already set by from_data
 
     # Select probe frequency for heatmap
-    # We choose something within the band or slightly detuned.
-    # Center of band:
     w_center = np.mean(omegas)
 
     print("Generating J_ij Heatmap...")

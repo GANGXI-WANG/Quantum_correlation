@@ -2,24 +2,15 @@ import numpy as np
 from scipy.optimize import minimize
 
 class LinearChain:
-    def __init__(self, N=20, alpha=0.0):
+    def __init__(self, N=10):
         """
         Initialize the linear ion chain.
-
-        Args:
-            N (int): Number of ions.
-            alpha (float): Strength of the quartic term in the axial potential relative to quadratic.
-                           Potential V(z) ~ 0.5*z^2 + alpha*z^4.
-                           Dimensionless units.
+        N: Number of ions.
         """
         self.N = N
-        self.alpha = alpha
         self.positions = None
-        self.modes = None
         self.frequencies = None
         self.eigenvectors = None
-        self.raw_evals = None
-        self.raw_evecs = None
 
     @classmethod
     def from_data(cls, dz, omegas):
@@ -28,237 +19,140 @@ class LinearChain:
 
         Args:
             dz (list or np.array): Distances between adjacent ions (length N-1).
+                                   Units: micrometers (based on external code).
             omegas (list or np.array): Mode frequencies (length N).
         """
         N = len(dz) + 1
-        if len(omegas) != N:
-            raise ValueError(f"Number of frequencies ({len(omegas)}) must equal number of ions ({N}) implied by dz.")
-
         instance = cls(N=N)
 
-        # Calculate positions centered at 0
+        # Calculate positions
+        # External code: z[i+1] = z[i] + dz[i], starting z[0]=0.
         z = np.zeros(N)
-        # z[0] is arbitrary, fix later to center
         current_z = 0.0
-        z[0] = 0.0
         for i, d in enumerate(dz):
             current_z += d
             z[i+1] = current_z
 
-        # Center
-        center = (z[0] + z[-1]) / 2.0
-        instance.positions = z - center
+        # Center the chain (optional but good practice, external code doesn't seem to center explicitly in collective_mode but relative distances matter)
+        # External code uses rinv3 which depends on |z_i - z_j|, so absolute position doesn't matter.
+        instance.positions = z
 
-        # Store frequencies
-        # User provided omegas might be sorted high to low.
+        # Frequencies provided are usually the target frequencies or measured ones.
         instance.frequencies = np.array(omegas)
 
         return instance
 
-    def potential(self, u):
+    def compute_transverse_modes(self, omx):
         """
-        Dimensionless potential energy of the chain.
-        u: array of positions.
+        Calculate collective modes using the method from ion_distance_parameter.py
+
+        Args:
+            omx: The trap frequency (highest frequency mode usually).
+                 External code uses omx as the 'trap frequency' in the diagonal term.
         """
-        # Sort positions to avoid singularities in calculation (though minimize should handle order if started correctly)
-        # But we assume ordered for the sum 1/|ui-uj|
-        # To avoid sorting in the loop, we assume u is ordered, or we take abs.
+        z = self.positions
+        L = self.N
 
-        # Confinement
-        V_trap = 0.5 * np.sum(u**2) + self.alpha * np.sum(u**4)
+        # Distance matrix
+        # rinv3_ij = 1 / |z_i - z_j|^3
+        rinv3 = np.abs(np.reshape(z, (1, -1)) - np.reshape(z, (-1, 1)))
+        np.fill_diagonal(rinv3, 1.0) # Avoid div by zero temporarily
+        rinv3 = 1.0 / rinv3**3
+        np.fill_diagonal(rinv3, 0.0)
 
-        # Coulomb
-        # Vectorized coulomb sum
-        u_col = u[:, np.newaxis]
-        diff = u_col - u
-        # We need upper triangle
-        with np.errstate(divide='ignore'):
-            inv_dist = 1.0 / np.abs(diff)
+        # Coefficient from external code
+        # coef = 9e9 * 1.602e-19**2 / 171 / 1.66e-27 / 1e-6**3 / 1e3**2 (if units are kHz?)
+        # External code comment says: # 12.24 10ions
+        # coef = ... / 1e-6**3 / 1e3**2 ?
+        # The frequencies in external code 'omega' are ~242000.
+        # If these are Hz, they are very low (kHz range).
+        # Wait, usually trap freq is MHz. 242000 Hz = 242 kHz.
+        # 171 Yb mass = 171 * 1.66e-27 kg.
+        # Charge e.
+        # Distances dz ~ 4-6. Units? usually microns.
 
-        # Remove diagonal (infinity)
-        inv_dist[np.isinf(inv_dist)] = 0
+        # Let's copy the coefficient calculation exactly.
+        # coef = 9e9 * 1.602e-19**2 / (171 * 1.66e-27) / (1e-6)**3 / (1e3)**2
+        # (1e3)**2 suggests scaling from Hz to kHz? Or similar.
+        # If omx is in rad/s, we need consistent units.
+        # External code `omx` seems to be in rad/s if it comes from `2*pi*array`.
+        # BUT the code calculates `V = ... + omx**2`.
+        # If `omx` is 2*pi*242412 ~ 1.5e6. Squared ~ 2e12.
+        # Let's check `coef`.
+        # 9e9 * (1.6e-19)^2 ~ 2.3e-28.
+        # Mass ~ 2.8e-25.
+        # Ratio ~ 1e-3.
+        # 1/r^3 ~ 1/(1e-6)^3 = 1e18.
+        # Total ~ 1e15.
+        # If we divide by (1e3)^2 = 1e6, we get 1e9.
+        # This matches omx^2 ~ 1e12 if omx is in kHz?
 
-        V_coulomb = 0.5 * np.sum(inv_dist) # 0.5 because we summed both i,j and j,i
+        # Wait, external code `omega` is `2*np.pi*np.array([242412...])`.
+        # So omega is in rad/s (approx 1.5e6).
+        # `omx` is `max(omega) - shift`.
 
-        return V_trap + V_coulomb
+        # Re-eval coefficient lines:
+        # coef = 9e9 * 1.602e-19**2 / 171 / 1.66e-27 / 1e-6**3 / (1e6)**2 (The deepseek file has (1e6)**2)
+        # The ion_distance_parameter.py has `1e3**2`.
+        # This difference (1e6 vs 1e3) squared is 1e6.
+        # 1e3^2 = 1e6. 1e6^2 = 1e12.
+        # If omx is ~ 1e6, omx^2 ~ 1e12.
+        # If coef ~ 1e15 (raw SI)
+        # If we divide by 1e6 (from 1e3^2), we get 1e9. Too small for 1e12?
+        # If we divide by 1e12 (from 1e6^2), we get 1e3. Too small.
 
-    def force(self, u):
-        """
-        Gradient of potential (negative force).
-        """
-        N = self.N
-        grad = u + 4 * self.alpha * u**3 # Trap force
+        # Let's trust the logic:
+        # V matrix is calculated.
+        # E, b_jk = eigh(V).
+        # omega_k = sqrt(E).
 
-        u_col = u[:, np.newaxis]
-        diff = u_col - u # i - j
+        # I will implement the exact lines from `ion_distance_parameter.py` because that's the source of truth for the 10-ion parameters.
+        # Note: `ion_distance_parameter.py` uses `1e3**2`.
 
-        # Coulomb force on i from j: F_ij = sgn(z_i - z_j) / |z_i - z_j|^2
-        # dV/du_i = - sum_j F_ij
-        # But here we calculate gradient of V directly.
-        # V = sum 1/|ui - uj|
-        # d(1/|x|)/dx = -sgn(x)/x^2 = -x/|x|^3
+        coef = 9e9 * 1.602e-19**2 / 171 / 1.66e-27 / 1e-6**3 / 1e3**2
 
-        with np.errstate(divide='ignore', invalid='ignore'):
-            forces = - diff / np.abs(diff)**3
-
-        forces[np.isnan(forces)] = 0
-
-        grad += np.sum(forces, axis=1)
-        return grad
-
-    def compute_equilibrium_positions(self):
-        """
-        Find equilibrium positions minimizing the potential.
-        """
-        # Initial guess: approximate length scale
-        # For harmonic, L ~ (3N log N)^(1/3).
-        # Just create a linear array spread out
-        L_approx = 2.0 * self.N**(1/3) # Rough guess
-        initial_guess = np.linspace(-L_approx, L_approx, self.N)
-
-        res = minimize(self.potential, initial_guess, jac=self.force, method='L-BFGS-B',
-                       options={'ftol': 1e-12, 'gtol': 1e-12})
-
-        if not res.success:
-            raise RuntimeError(f"Optimization failed: {res.message}")
-
-        self.positions = np.sort(res.x)
-        return self.positions
-
-    def compute_transverse_modes(self):
-        """
-        Calculate transverse normal modes.
-        Returns eigenvalues (lambda) and eigenvectors (b).
-        The actual frequencies will be sqrt(w_trans^2 - w_axial^2 * lambda).
-        Here we return lambda (the Coulomb matrix eigenvalues).
-        """
-        if self.positions is None:
-            self.compute_equilibrium_positions()
-
-        u = self.positions
-        N = self.N
-
-        # Transverse Hessian A_ij
-        # Diagonal: A_ii = sum_{j!=i} 1/|u_i - u_j|^3
-        # Off-diagonal: A_ij = -1/|u_i - u_j|^3
-
-        u_col = u[:, np.newaxis]
-        diff = u_col - u
-
-        with np.errstate(divide='ignore'):
-            term = 1.0 / np.abs(diff)**3
-        term[np.isinf(term)] = 0
-
-        A = -term
-
+        V = coef * rinv3
         # Diagonal elements
-        row_sum = np.sum(term, axis=1)
-        np.fill_diagonal(A, row_sum)
+        V[range(L), range(L)] = -np.sum(V, axis=1) + omx**2
 
         # Diagonalize
-        evals, evecs = np.linalg.eigh(A)
+        evals, evecs = np.linalg.eigh(V)
 
-        # Sort by eigenvalue? Usually they come sorted.
-        # evecs columns are eigenvectors.
+        # Sort? eigh returns sorted eigenvalues.
+        # External code returns `omega_k = np.sqrt(E)`.
+        # And `omega_k - np.max(omega_k)`.
 
-        self.raw_evals = evals
-        self.raw_evecs = evecs
+        # In `ion_distance_parameter.py`:
+        # omega_k = np.sqrt(E)
+        # return (omega_k - np.max(omega_k), b_jk)
 
-        # If we have pre-assigned frequencies (via from_data), we need to pair them.
-        if self.frequencies is not None:
-             self._pair_modes_with_frequencies()
+        # The frequencies I want to store are the raw omega_k (sqrt(E)).
 
-        return evals, evecs
+        self.raw_freqs = np.sqrt(evals)
+        self.eigenvectors = evecs
 
-    def _pair_modes_with_frequencies(self):
+        # We should ensure the sorted order matches the 'omegas' provided if we want to pair them.
+        # Usually standard is Highest Freq = COM (for transverse?).
+        # `ion_distance_parameter.py` calculates `omega_k`.
+        # The `omega` array in that file is sorted high to low.
+        # `omega_k` from `eigh` (sorted E low to high) implies frequencies low to high?
+        # Wait, V = - Coulomb + Trap.
+        # Smallest eigenvalue of V -> Smallest frequency?
+        # Yes.
+        # So `self.raw_freqs` are Low to High.
+        # The provided `omegas` are High to Low.
+
+        return self.raw_freqs, self.eigenvectors
+
+    def get_modes(self):
         """
-        Pair the calculated eigenvectors with the stored frequencies.
-        Transverse physics: Smallest eigenvalue (stiffest repulsion diff) -> Highest Frequency.
-        Actually, Transverse freq^2 = w_trap^2 - const * eigenvalue.
-        So Small eigenvalue -> Large frequency.
+        Return frequencies and eigenvectors sorted High to Low to match provided data.
         """
-        if self.frequencies is None or self.raw_evals is None:
-            return
+        if self.eigenvectors is None:
+            return None, None
 
-        # Sort eigenvectors by eigenvalue (ascending)
-        # raw_evals and raw_evecs are already sorted ascending by eigh.
+        # Reverse order to match High->Low
+        freqs = self.raw_freqs[::-1]
+        modes = self.eigenvectors[:, ::-1]
 
-        # Sort provided frequencies descending (Highest freq corresponds to Lowest eigenvalue)
-        sorted_freqs = np.sort(self.frequencies)[::-1]
-
-        self.frequencies = sorted_freqs
-        # self.raw_evecs corresponds to eigenvalues Ascending.
-        # so raw_evecs[:, 0] corresponds to Lowest eigenvalue -> Highest Frequency.
-
-        self.eigenvectors = self.raw_evecs
-
-    def get_scaled_modes(self, f_min, f_max):
-        """
-        Scale the modes to fit the provided frequency range [f_min, f_max].
-        We assume the relationship: omega_k^2 = C - D * lambda_k
-        Or omega_k^2 = omega_trap^2 - lambda_k * omega_z^2.
-
-        However, to exactly match the min and max frequencies provided by the user,
-        we can simply map the range of eigenvalues to the range of squared frequencies.
-
-        Transverse modes: Higher lambda (stiffest Coulomb repulsion difference) -> Lower frequency?
-        Wait.
-        Equation of motion: d^2x/dt^2 = - (omega_t^2 - sum 1/d^3) x ...
-        Actually, the Coulomb interaction softens the trap in transverse direction.
-        So larger Coulomb curvature (positive sum 1/d^3) -> Lower frequency.
-        So omega_k^2 = omega_common^2 - lambda_k.
-
-        Where lambda_k are eigenvalues of the A matrix calculated above.
-        Min lambda -> Max omega.
-        Max lambda -> Min omega.
-
-        We have f_min and f_max.
-        We have lambda_min and lambda_max.
-
-        omega_max^2 = C - lambda_min
-        omega_min^2 = C - lambda_max
-
-        We can solve for C.
-        """
-        if self.raw_evals is None:
-            self.compute_transverse_modes()
-
-        evals = self.raw_evals # lambda
-
-        lambda_min = np.min(evals)
-        lambda_max = np.max(evals)
-
-        w_min = 2 * np.pi * f_min
-        w_max = 2 * np.pi * f_max
-
-        # w_max corresponds to lambda_min
-        # w_min corresponds to lambda_max
-        # w^2 = Offset - Slope * lambda
-
-        # w_max^2 = Off - S * l_min
-        # w_min^2 = Off - S * l_max
-        # (w_max^2 - w_min^2) = S * (l_max - l_min)
-
-        slope = (w_max**2 - w_min**2) / (lambda_max - lambda_min)
-        offset = w_max**2 + slope * lambda_min
-
-        squared_freqs = offset - slope * evals
-
-        # Check for negative squared freqs (instability)
-        if np.any(squared_freqs < 0):
-            # This shouldn't happen if we map directly, unless the range is flipped.
-            raise ValueError("Scaling resulted in imaginary frequencies.")
-
-        freqs = np.sqrt(squared_freqs)
-
-        # Sort frequencies and eigenvectors (typically we want frequencies low to high?)
-        # But the user might expect them ordered by mode index.
-        # The eigenvalues 'evals' are sorted low to high.
-        # So 'freqs' will be sorted high to low (because of minus sign).
-        # Let's sort them low to high to be standard.
-
-        sort_idx = np.argsort(freqs)
-        self.frequencies = freqs[sort_idx]
-        self.eigenvectors = self.raw_evecs[:, sort_idx]
-
-        return self.frequencies, self.eigenvectors
+        return freqs, modes

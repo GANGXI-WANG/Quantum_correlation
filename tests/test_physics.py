@@ -10,7 +10,18 @@ def test_physics_module():
     dz = [6.0019812,5.15572782,4.72673127,4.54681994,4.47707492,4.54681994,4.72673127,5.15572782,6.0019812]
     omegas = 2*np.pi*np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
     chain = LinearChain.from_data(dz, omegas)
-    chain.compute_transverse_modes()
+
+    # Calculate modes with omx
+    shift = 2.0 * np.pi * 240.0203e3
+    omx_external = np.max(omegas) - shift
+    chain.compute_transverse_modes(omx_external)
+
+    # Manually align eigenvectors if needed (in main.py we do it, here we assume chain has them)
+    # But compute_transverse_modes sets raw_freqs and eigenvectors.
+    # It does NOT align them to provided 'omegas'.
+    # get_modes() returns sorted High->Low.
+    _, evecs = chain.get_modes()
+    chain.eigenvectors = evecs
 
     # Parameters
     Omega = 2 * np.pi * 400e3
