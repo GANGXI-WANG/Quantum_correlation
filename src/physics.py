@@ -91,6 +91,26 @@ class SpinBosonSystem:
 
         return J
 
+    def calculate_spectral_density(self, omega, ion_index):
+        """
+        Calculate J(omega) for a single ion.
+        J(omega) = Sum_k ( |2 eta_k b_k Omega|^3 / sqrt(2) ) / ( (omega - w_k)^2 + (2 eta_k b_k Omega)^2 / 2 )
+        """
+        # Get local b_k for the specific ion
+        b_k = self.mode_vecs[ion_index, :] # Shape (N_modes,)
+
+        # factor = 2 * eta_k * b_k * Omega
+        # Note: b_k can be negative, formula uses abs magnitude cubed for numerator?
+        # User formula: |2 eta_k b_k Omega|^3
+
+        factor = 2 * self.eta_k * b_k * self.Omega
+        factor_abs = np.abs(factor)
+
+        numerator = (factor_abs**3) / np.sqrt(2)
+        denominator = (omega - self.mode_freqs)**2 + (factor_abs**2) / 2
+
+        return np.sum(numerator / denominator)
+
     def construct_hamiltonian(self, ion_indices):
         """
         Construct Hamiltonian for a subset of ions (e.g., 2 ions).

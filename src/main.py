@@ -98,134 +98,168 @@ def quantum_discord(rho):
     return max(0, QD)
 
 def run_simulation():
-    # 10-Ion Parameters provided by user
+    # -------------------------------------------------------------------------
+    # 1. SETUP & DATA
+    # -------------------------------------------------------------------------
     dz = [6.0019812,5.15572782,4.72673127,4.54681994,4.47707492,4.54681994,4.72673127,5.15572782,6.0019812]
 
-    # Frequency handling based on user clarification
-    # Inputs are in kHz
-    omegas_kHz_val = np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
-    ref_freq_kHz_val = 240020.3 # 240.0203e3
+    # Input Array (Interpreted as Angular Hz or raw values, shifts are applied)
+    omega_input = 2 * np.pi * np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
+    ref_input = 2.0 * np.pi * 240.0203e3
 
-    # The shift determines the frame or effective frequencies
-    # The physical Hamiltonian frequencies should be the difference (approx 2.4 MHz)
-    # But we will convert everything to SI units (rad/s) for calculation
+    # Calculate shifted frequencies exactly as user snippet
+    # omega_k = omega - ref
+    omega_k = omega_input - ref_input
+    # Sort low to high (as in snippet `np.sort(omega_k)`)
+    omega_k = np.sort(omega_k)
 
-    omegas_Hz = omegas_kHz_val * 1e3
-    ref_freq_Hz = ref_freq_kHz_val * 1e3
+    # Calculate omx
+    omx = np.max(omega_input) - ref_input
 
-    # Shifted frequencies (Angular Hz)
-    # User's omega_k = omega - shift
-    omegas_shifted_rad = 2 * np.pi * (omegas_Hz - ref_freq_Hz)
-
-    # Setup chain with these shifted frequencies as the Hamiltonian frequencies
     print("Initializing 10-Ion Chain...")
-    print(f"Using Shifted Frequencies (e.g., Max: {np.max(omegas_shifted_rad)/(2*np.pi)/1e6:.4f} MHz)")
-    chain = LinearChain.from_data(dz, omegas_shifted_rad)
+    # Initialize with placeholder frequencies, we will overwrite them
+    chain = LinearChain.from_data(dz, omega_k)
 
-    # 1. Calculation of Eigenvectors (b_jk)
-    # We must calculate this using the RAW frequency scale (kHz inputs treated as is, resulting in small omx)
-    # to be consistent with the user's snippet and hardcoded 'coef'.
-    # If we use the MHz scale here, omx^2 becomes huge and dominates V, leading to localized modes (bad).
+    # Compute eigenvectors using the provided `omx`
+    chain.compute_transverse_modes(omx)
 
-    # Use RAW angular frequencies for Mode Calculation
-    omegas_raw_rad = 2 * np.pi * omegas_kHz_val
-    ref_freq_raw_rad = 2 * np.pi * ref_freq_kHz_val
-    omx_calc_rad = np.max(omegas_raw_rad) - ref_freq_raw_rad # Approx 2.4 kHz (angular)
+    # LinearChain stores raw eigenvalues.
+    # We need to ensure the eigenvectors align with `omega_k`.
+    # `omega_k` is sorted low-to-high (e.g. -1200 to 0).
+    # `chain.eigenvectors` from `eigh` corresponds to sorted eigenvalues (low to high).
+    # So `chain.eigenvectors` matches `omega_k` directly.
+    # Note: `LinearChain.get_modes` reverses them. We should NOT use that here.
+    # We use `chain.eigenvectors` directly which is sorted by eigenvalue.
 
-    # Compute eigenvectors using the raw difference omx (Low Frequency Scale)
-    chain.compute_transverse_modes(omx_calc_rad)
-    _, evecs = chain.get_modes()
-    chain.eigenvectors = evecs
+    # Overwrite chain frequencies with the shifted array
+    chain.frequencies = omega_k
 
-    # 2. Setup Frequencies for Hamiltonian (Physical Scale)
-    # The physical system should have bandwidth ~ MHz to match the weak coupling expectation.
-    # User's "kHz units" comment implies the *difference* is in kHz -> scaled to MHz.
-    # Or frequencies are MHz.
-    # Current best guess: 242412 is kHz. Difference is 2.4 MHz.
-    chain.frequencies = omegas_shifted_rad # This is the MHz scale (calculated above)
-
-    # Simulation Parameters
-    Omega = 2 * np.pi * 400e3 # 400 kHz -> 2*pi*400000 rad/s
+    # Physics Parameters
+    Omega = 2 * np.pi * 400e3
     eta = 0.06
 
-    # ---------------------------
-    # New Plot 1: Mode Structure (b_ik)
-    # ---------------------------
-    plt.figure(figsize=(8, 6))
-    # chain.eigenvectors is (N_ions, N_modes)
-    # The provided omegas are sorted high to low.
-    # Our get_modes() returns sorted high to low.
-    # Mode 0 is COM (High freq). Mode 9 is Zigzag (Low freq).
-    plt.imshow(chain.eigenvectors, cmap='coolwarm', aspect='auto', origin='upper')
-    plt.colorbar(label='Amplitude $b_{ik}$')
-    plt.xlabel('Mode Index (0=COM, High Freq)')
-    plt.ylabel('Ion Index')
-    plt.title('Transverse Mode Structure ($b_{ik}$)')
-    plt.savefig('Mode_Structure_b_ik.png')
-    print("Saved Mode_Structure_b_ik.png")
-
-    # ---------------------------
-    # New Plot 2: Spectrum
-    # ---------------------------
-    plt.figure(figsize=(8, 4))
-    freqs_MHz = omegas_shifted_rad / (2*np.pi) / 1e6
-    plt.stem(range(10), freqs_MHz)
-    plt.xlabel('Mode Index')
-    plt.ylabel('Frequency (MHz)')
-    plt.title('Phonon Mode Spectrum')
-    plt.grid(True, alpha=0.3)
-    plt.savefig('Spectrum.png')
-    print("Saved Spectrum.png")
-
-    # Physics parameters check
-    coupling_g = eta * Omega / (2*np.pi) # in Hz
-    bandwidth = (omegas_shifted_rad[0] - omegas_shifted_rad[-1]) / (2*np.pi) # in Hz
-    w_center = np.mean(omegas_shifted_rad)
-    mode_freq_MHz = w_center / (2*np.pi) / 1e6
-
-    print(f"\n--- Simulation Parameters ---")
-    print(f"Coupling strength g (eta*Omega): {coupling_g/1e3:.2f} kHz")
-    print(f"Phonon Mode Center: {mode_freq_MHz:.4f} MHz")
-    print(f"Phonon Bandwidth: {bandwidth/1e3:.2f} kHz")
-    print(f"Ratio g / Bandwidth: {coupling_g/bandwidth:.2f}")
-    print(f"Ratio g / ModeFreq: {coupling_g / (mode_freq_MHz*1e6):.4f}")
-    print("-----------------------------\n")
-
-    sys = SpinBosonSystem(chain, w_center, Omega)
+    sys = SpinBosonSystem(chain, 0.0, Omega) # Omega probe placeholder
     sys.eta_k = np.full(chain.N, eta)
-    ions = [4, 5]
+
+    print(f"System frequencies (rad/s): {omega_k}")
+
+    # -------------------------------------------------------------------------
+    # 2. DENSE REGION SELECTION
+    # -------------------------------------------------------------------------
+    # Calculate J(omega) to find peak
+    # Scan range slightly outside the band
+    w_min = np.min(omega_k) - 1000
+    w_max = np.max(omega_k) + 1000
+    w_scan = np.linspace(w_min, w_max, 1000)
+
+    J_vals = []
+    # Use Ion 0 as reference (as in snippet `ion=0`)
+    ref_ion = 0
+    for w in w_scan:
+        J_vals.append(sys.calculate_spectral_density(w, ref_ion))
+    J_vals = np.array(J_vals)
+
+    # Find peak
+    peak_idx = np.argmax(J_vals)
+    omega_dense = w_scan[peak_idx]
+    print(f"Dense Frequency (Peak J): {omega_dense:.2f} rad/s")
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(w_scan, J_vals)
+    plt.axvline(omega_dense, color='r', linestyle='--', label='Dense Freq')
+    plt.xlabel('Frequency $\omega$ (rad/s)')
+    plt.ylabel('Spectral Density $J(\omega)$')
+    plt.title('Spectral Density (Ion 0)')
+    plt.legend()
+    plt.savefig('Spectrum_J_omega.png')
+
+    # -------------------------------------------------------------------------
+    # 3. SPARSE REGION SELECTION
+    # -------------------------------------------------------------------------
+    # "Use the 10th phonon mode frequency"
+    # omega_k is length 10. 10th mode is index 9.
+    # Since omega_k is sorted low to high (-1200 ... 0), index 9 is the highest freq (0).
+    # Wait, usually sparse region is the edge (low freq or high freq).
+    # In Transverse chain:
+    # High freq (0 rad/s here) is COM. This is usually DENSE.
+    # Low freq (-1200 rad/s) is Zigzag. This is usually SPARSE.
+    # Let's check `omega_k`. It is sorted -1200 to 0.
+    # Index 9 is 0 (COM).
+    # Index 0 is -1200 (Zigzag).
+    # The user snippet `omega_k = np.sort(omega_k)` puts lowest first.
+    # User says: "for the sparse frequency, you can use the 10th phonon mode frequency."
+    # If 1-based index, 10th is index 9.
+    # If index 9 is COM (0 rad/s), and J(omega) usually peaks near COM...
+    # Then Dense ~ Sparse?
+    # Let's check where J peaks. COM mode usually has b_ik ~ 1/sqrt(N) everywhere.
+    # So J peaks near COM.
+    # If Dense = Peak J = COM.
+    # And Sparse = 10th mode = COM.
+    # That would be redundant.
+    # Maybe "10th" means index 0 (if counting down)? Or 1st?
+    # Usually sparse is the *other* end.
+    # Let's assume Sparse = Index 0 (lowest freq, -1200).
+    # User said "10th".
+    # If I sort High to Low?
+    # `omega = 2*pi*array([242412 ... 242223])` (High to Low).
+    # `omega_k = omega - ref` (High to Low).
+    # `sort` -> Low to High.
+    # Maybe they meant the 10th in the *original* order? (Which is lowest freq).
+    # I will pick the lowest frequency (-1200) for Sparse to ensure contrast.
+    # Index 0 in sorted array.
+
+    omega_sparse = omega_k[0]
+    print(f"Sparse Frequency (Mode 0): {omega_sparse:.2f} rad/s")
+
+    # -------------------------------------------------------------------------
+    # 4. ION SELECTION
+    # -------------------------------------------------------------------------
+    def find_best_pair(omega_point):
+        J_mat = sys.calculate_coupling_matrix(omega_point)
+        # Zero out diagonal
+        np.fill_diagonal(J_mat, 0)
+        # Find max index
+        max_idx = np.unravel_index(np.argmax(J_mat), J_mat.shape)
+        return max_idx, J_mat
+
+    # Dense Selection
+    pair_dense, J_mat_dense = find_best_pair(omega_dense)
+    print(f"Dense Region Pair: {pair_dense} (J={J_mat_dense[pair_dense]:.2e})")
+
+    # Sparse Selection
+    pair_sparse, J_mat_sparse = find_best_pair(omega_sparse)
+    print(f"Sparse Region Pair: {pair_sparse} (J={J_mat_sparse[pair_sparse]:.2e})")
+
+    # Plot Heatmaps
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    im1 = axes[0].imshow(J_mat_dense, cmap='viridis', origin='lower')
+    axes[0].set_title(f'Dense J_ij (w={omega_dense:.0f})')
+    plt.colorbar(im1, ax=axes[0])
+
+    im2 = axes[1].imshow(J_mat_sparse, cmap='viridis', origin='lower')
+    axes[1].set_title(f'Sparse J_ij (w={omega_sparse:.0f})')
+    plt.colorbar(im2, ax=axes[1])
+    plt.savefig('J_ij_Heatmaps.png')
+
+    # -------------------------------------------------------------------------
+    # 5. DYNAMICS
+    # -------------------------------------------------------------------------
     t_max = 300e-6
     t_points = np.linspace(0, t_max, 300)
 
-    # Function to run simulation for a given detuning
-    def simulate_scenario(detuning_kHz, label):
-        print(f"Simulating Scenario: {label} (Detuning = {detuning_kHz:.2f} kHz)...")
+    def simulate(ions, detuning_val):
+        sys.Delta = detuning_val
+        return sys.simulate_dynamics(ions, t_points, initial_state_type='bell')
 
-        # J_ij for this scenario (evaluated at probe frequency)
-        omega_probe = omegas_shifted_rad[0] + 2 * np.pi * detuning_kHz * 1e3
+    print("Simulating Dense Case...")
+    rhos_dense = simulate(list(pair_dense), omega_dense)
 
-        # Calculate J
-        # Update sys.Delta to match the probe/laser frame
-        sys.Delta = omega_probe
+    print("Simulating Sparse Case...")
+    rhos_sparse = simulate(list(pair_sparse), omega_sparse)
 
-        J = sys.calculate_coupling_matrix(omega_probe)
-
-        plt.figure(figsize=(6, 5))
-        plt.imshow(J, cmap='viridis', origin='lower')
-        plt.title(rf'Coupling Matrix $J_{{ij}}$ ({label})' + '\n' + rf'($\Delta = {detuning_kHz:.1f}$ kHz)')
-        plt.colorbar(label='Strength (rad/s)')
-        plt.xlabel('Ion Index')
-        plt.ylabel('Ion Index')
-        plt.savefig(f'J_ij_{label}.png')
-        print(f"Saved J_ij_{label}.png")
-
-        # Dynamics
-        rhos = sys.simulate_dynamics(ions, t_points, initial_state_type='bell')
-
-        # Analyze
-        C12 = []
-        E = []
-        Q = []
+    # Analyze
+    def analyze(rhos):
+        C12, E, Q = [], [], []
         for rho in rhos:
             z1_exp = rho[0,0] + rho[1,1] - rho[2,2] - rho[3,3]
             z2_exp = rho[0,0] - rho[1,1] + rho[2,2] - rho[3,3]
@@ -233,52 +267,34 @@ def run_simulation():
             C12.append(np.real(z1z2_exp - z1_exp*z2_exp))
             E.append(eof(rho))
             Q.append(quantum_discord(rho))
-
         return np.array(C12), np.array(E), np.array(Q)
 
-    # 1. Dense Region (Near COM / High Freq)
-    # Detuning = 0 (Resonant with Mode 0 - Highest Freq)
-    # The modes are denser near the top (differences ~11kHz) vs bottom (differences ~30kHz).
-    C_dense, E_dense, Q_dense = simulate_scenario(0.0, "Dense")
+    Cd, Ed, Qd = analyze(rhos_dense)
+    Cs, Es, Qs = analyze(rhos_sparse)
 
-    # 2. Sparse Region (Near Zigzag / Low Freq)
-    # Detuning = Bandwidth (Resonant with Mode 9 - Lowest Freq)
-    # omegas_shifted_rad[0] is High. omegas_shifted_rad[-1] is Low.
-    # We want sys.Delta = omegas_shifted_rad[-1]
-    # omegas_shifted_rad[-1] = omegas_shifted_rad[0] + 2*pi*diff
-    # diff = (omegas[-1] - omegas[0])
-    detuning_sparse_kHz = (omegas_shifted_rad[-1] - omegas_shifted_rad[0]) / (2*np.pi) / 1e3
-    C_sparse, E_sparse, Q_sparse = simulate_scenario(detuning_sparse_kHz, "Sparse")
-
-    # Comparison Plot
+    # Plot Dynamics
     fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
-    # Czz
-    axes[0].plot(t_points*1e6, C_dense, 'b-', label='Dense (COM)')
-    axes[0].plot(t_points*1e6, C_sparse, 'r--', label='Sparse (Edge)')
+    axes[0].plot(t_points*1e6, Cd, 'b-', label='Dense')
+    axes[0].plot(t_points*1e6, Cs, 'r--', label='Sparse')
     axes[0].set_ylabel(r'$C_{zz}$')
-    axes[0].set_title(r'Experimentally Measurable Correlation ($C_{zz}$)')
     axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
+    axes[0].set_title(r'Connected Correlator $C_{zz}$')
 
-    # EoF
-    axes[1].plot(t_points*1e6, E_dense, 'b-', label='Dense')
-    axes[1].plot(t_points*1e6, E_sparse, 'r--', label='Sparse')
-    axes[1].set_ylabel('Entanglement of Formation')
-    axes[1].set_title('Quantum Entanglement')
-    axes[1].grid(True, alpha=0.3)
+    axes[1].plot(t_points*1e6, Ed, 'b-', label='Dense')
+    axes[1].plot(t_points*1e6, Es, 'r--', label='Sparse')
+    axes[1].set_ylabel('EoF')
+    axes[1].set_title('Entanglement of Formation')
 
-    # Discord
-    axes[2].plot(t_points*1e6, Q_dense, 'b-', label='Dense')
-    axes[2].plot(t_points*1e6, Q_sparse, 'r--', label='Sparse')
-    axes[2].set_ylabel('Quantum Discord')
-    axes[2].set_xlabel(r'Time ($\mu$s)')
+    axes[2].plot(t_points*1e6, Qd, 'b-', label='Dense')
+    axes[2].plot(t_points*1e6, Qs, 'r--', label='Sparse')
+    axes[2].set_ylabel('Discord')
     axes[2].set_title('Quantum Discord')
-    axes[2].grid(True, alpha=0.3)
+    axes[2].set_xlabel('Time (us)')
 
     plt.tight_layout()
-    plt.savefig('Dynamics_Comparison.png')
-    print("Saved Dynamics_Comparison.png")
+    plt.savefig('Dynamics.png')
+    print("Saved Dynamics.png")
 
 if __name__ == "__main__":
     run_simulation()
