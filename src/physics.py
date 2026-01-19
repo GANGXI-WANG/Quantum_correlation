@@ -230,15 +230,24 @@ class SpinBosonSystem:
 
         return H
 
-    def simulate_dynamics(self, ion_indices, time_points):
+    def simulate_dynamics(self, ion_indices, time_points, initial_state_type='eg'):
         """
-        Simulate evolution starting from |e, g, 0>.
+        Simulate evolution.
+        initial_state_type:
+            'eg' -> |e, g, 0> (index 0)
+            'bell' -> (|e, g, 0> + |g, e, 0>) / sqrt(2) (superposition of index 0 and 1)
         """
         H = self.construct_hamiltonian(ion_indices)
 
-        # Initial state: |e, g, 0> -> index 0
         psi0 = np.zeros(H.shape[0], dtype=complex)
-        psi0[0] = 1.0
+
+        if initial_state_type == 'eg':
+            psi0[0] = 1.0
+        elif initial_state_type == 'bell':
+            psi0[0] = 1.0/np.sqrt(2)
+            psi0[1] = 1.0/np.sqrt(2)
+        else:
+            raise ValueError("Unknown initial state type. Use 'eg' or 'bell'.")
 
         # Evolve
         # psi(t) = exp(-iHt) psi0

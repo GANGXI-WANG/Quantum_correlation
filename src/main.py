@@ -1,7 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from src.ion_chain import LinearChain
-from src.physics import SpinBosonSystem
+try:
+    from src.ion_chain import LinearChain
+    from src.physics import SpinBosonSystem
+except ImportError:
+    from ion_chain import LinearChain
+    from physics import SpinBosonSystem
 import os
 
 def entropy(rho):
@@ -166,7 +170,8 @@ def run_simulation():
     t_max = 300e-6 # 300 us
     t_points = np.linspace(0, t_max, 300)
 
-    rhos = sys.simulate_dynamics(ions, t_points)
+    # Use Bell state initialization as requested
+    rhos = sys.simulate_dynamics(ions, t_points, initial_state_type='bell')
 
     # Analyze
     C12_vals = []
