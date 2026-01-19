@@ -100,54 +100,56 @@ def quantum_discord(rho):
 def run_simulation():
     # 10-Ion Parameters provided by user
     dz = [6.0019812,5.15572782,4.72673127,4.54681994,4.47707492,4.54681994,4.72673127,5.15572782,6.0019812]
-    omegas = 2*np.pi*np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
 
-    Omega = 2 * np.pi * 400e3 # 400 kHz in rad/s
-    eta = 0.06 # Constant eta
+    # Frequency handling
+    # The numbers in the array are treated as kHz.
+    omegas_kHz_val = np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
+    ref_freq_kHz_val = 240020.3 # 240.0203e3
+
+    # 1. Calculation of Eigenvectors (b_jk)
+    # This must strictly follow the user's snippet logic where inputs are treated as is.
+    # The snippet calculates omx using the raw values (interpreted as kHz? or Hz in that context?)
+    # But to get the correct mode structure, we replicate the snippet's omx calculation.
+    # Snippet: omega = 2*pi*array(...). omx = max(omega) - 2*pi*240020.3.
+    # So we use the Angular Hz values of the raw inputs.
+    omegas_raw_rad = 2 * np.pi * omegas_kHz_val
+    ref_freq_raw_rad = 2 * np.pi * ref_freq_kHz_val
+    omx_for_calc = np.max(omegas_raw_rad) - ref_freq_raw_rad
 
     print("Initializing 10-Ion Chain...")
-    chain = LinearChain.from_data(dz, omegas)
+    # Initialize chain with placeholders (frequencies will be overwritten)
+    chain = LinearChain.from_data(dz, omegas_raw_rad)
 
-    # Calculate modes using the specific omx from external code logic
-    # omx = max(omega) - shift
-    shift = 2.0 * np.pi * 240.0203e3
-    omx_external = np.max(omegas) - shift
-
-    # Compute modes with this omx to get the correct b_jk
-    # The frequencies returned will be the calculated ones (small), but we will overwrite them
-    # with the provided 'omegas' (large) as per LinearChain.from_data logic which stores them.
-    # Actually from_data stores 'omegas' in chain.frequencies.
-    # compute_transverse_modes overwrites them?
-    # No, my updated compute_transverse_modes calculates raw_freqs but doesn't overwrite self.frequencies unless we ask it to.
-    # Wait, let's check LinearChain again.
-    # It stores raw_freqs.
-    # But SpinBosonSystem uses chain.frequencies.
-    # We should ensure chain.frequencies is the provided 'omegas', but chain.eigenvectors is the calculated one.
-
-    chain.compute_transverse_modes(omx_external)
-    # LinearChain.get_modes() returns calculated freqs.
-    # We want to keep the PROVIDED frequencies.
-    # But we want the CALCULATED eigenvectors.
-    # And we need to ensure they are sorted consistently (High to Low).
-    # My LinearChain.get_modes returns High to Low.
-    # And the provided omegas are High to Low.
-    # So we just take the eigenvectors from get_modes and assign them to the chain.
-
+    # Compute eigenvectors using the raw difference omx
+    chain.compute_transverse_modes(omx_for_calc)
     _, evecs = chain.get_modes()
     chain.eigenvectors = evecs
-    # chain.frequencies is already set by from_data
 
-    # Select probe frequency for heatmap
-    w_center = np.mean(omegas)
+    # 2. Calculation of Hamiltonian Frequencies
+    # "frequency units is kHz" implies the difference (242412 - 240020 = 2392) is 2392 kHz = 2.392 MHz.
+    # So we scale the difference by 1000 to get Hz, then 2*pi for Angular Hz.
+    # difference_kHz = omegas_kHz_val - ref_freq_kHz_val
+    # difference_Hz = difference_kHz * 1e3
+    # omegas_hamiltonian_rad = 2 * np.pi * difference_Hz
 
+    omegas_shifted_kHz = omegas_kHz_val - ref_freq_kHz_val
+    omegas_hamiltonian_rad = 2 * np.pi * omegas_shifted_kHz * 1e3 # Convert kHz diff to Hz -> rad/s
+
+    # Update chain frequencies for the physics module
+    chain.frequencies = omegas_hamiltonian_rad
+
+    # Simulation Parameters
+    Omega = 2 * np.pi * 400e3 # 400 kHz -> 2*pi*400000 rad/s
+    eta = 0.06
+
+    # Heatmap
+    w_center = np.mean(omegas_hamiltonian_rad)
     print("Generating J_ij Heatmap...")
     sys = SpinBosonSystem(chain, w_center, Omega)
-    # Manually overwrite eta_k to be constant 0.06 as per user request
     sys.eta_k = np.full(chain.N, eta)
 
     J = sys.calculate_coupling_matrix(w_center)
 
-    # Plot J_ij
     plt.figure(figsize=(6, 5))
     plt.imshow(J, cmap='viridis', origin='lower')
     plt.title(r'Coupling Matrix $J_{ij}$ at Center of Band' + '\n' + r'(10 Ions, $\Omega$=400kHz, $\eta$=0.06)')
@@ -159,13 +161,36 @@ def run_simulation():
 
     # Dynamics
     print("Simulating Dynamics...")
-    # Select two ions: 4 and 5 (indices, 0-based) - The middle pair
     ions = [4, 5]
 
-    # Set Delta resonant with a mode? Or detuned?
-    # Usually we want resonance to see exchange.
-    # Let's set Delta to the COM mode frequency (highest)
-    sys.Delta = omegas[0]
+    detuning_kHz = 0.0
+    sys.Delta = omegas_hamiltonian_rad[0] + 2 * np.pi * detuning_kHz * 1e3
+
+    # Physics parameters check
+    coupling_g = eta * Omega / (2*np.pi) # in Hz
+    bandwidth = (omegas_hamiltonian_rad[0] - omegas_hamiltonian_rad[-1]) / (2*np.pi) # in Hz
+    mode_freq_MHz = w_center / (2*np.pi) / 1e6
+
+    print(f"\n--- Simulation Parameters ---")
+    print(f"Coupling strength g (eta*Omega): {coupling_g/1e3:.2f} kHz")
+    print(f"Phonon Mode Center: {mode_freq_MHz:.4f} MHz")
+    print(f"Phonon Bandwidth: {bandwidth/1e3:.2f} kHz")
+    print(f"Ratio g / Bandwidth: {coupling_g/bandwidth:.2f}")
+    print(f"Ratio g / ModeFreq: {coupling_g / (mode_freq_MHz*1e6):.4f}")
+    print(f"Detuning from COM: {detuning_kHz:.2f} kHz")
+
+    if coupling_g < bandwidth * 0.1:
+         print("Regime: Weak Coupling (Markovian decay expected).")
+    elif coupling_g > bandwidth * 10:
+         print("Regime: Strong Coupling (Coherent oscillations).")
+    else:
+         print("Regime: Intermediate Coupling.")
+    print("-----------------------------\n")
+
+    # Print b_jk for user verification
+    print("Coupling coefficients b_jk (for selected ions and top 3 modes):")
+    for ion_idx in ions:
+        print(f"Ion {ion_idx}: {chain.eigenvectors[ion_idx, :3]}")
 
     t_max = 300e-6 # 300 us
     t_points = np.linspace(0, t_max, 300)
@@ -194,7 +219,7 @@ def run_simulation():
     # 1. Connected Correlator (Measurable in Experiment)
     axes[0].plot(t_points*1e6, C12_vals, color='b', label=r'$C_{zz} = \langle \sigma_z^1 \sigma_z^2 \rangle - \langle \sigma_z^1 \rangle \langle \sigma_z^2 \rangle$')
     axes[0].set_ylabel(r'$C_{zz}$')
-    axes[0].set_title(r'Experimentally Measurable Correlation ($C_{zz}$)')
+    axes[0].set_title(f'Experimentally Measurable Correlation ($C_{{zz}}$)\nResonant with COM ($\Delta = \omega_{{COM}}$)')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
