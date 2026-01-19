@@ -101,74 +101,86 @@ def run_simulation():
     # 10-Ion Parameters provided by user
     dz = [6.0019812,5.15572782,4.72673127,4.54681994,4.47707492,4.54681994,4.72673127,5.15572782,6.0019812]
 
-    # Frequency handling
-    # The numbers in the array are treated as kHz.
+    # Frequency handling based on user clarification
+    # Inputs are in kHz
     omegas_kHz_val = np.array([242412, 242401, 242389, 242374, 242356, 242335, 242311, 242284, 242255, 242223])
     ref_freq_kHz_val = 240020.3 # 240.0203e3
 
+    # The shift determines the frame or effective frequencies
+    # The physical Hamiltonian frequencies should be the difference (approx 2.4 MHz)
+    # But we will convert everything to SI units (rad/s) for calculation
+
+    omegas_Hz = omegas_kHz_val * 1e3
+    ref_freq_Hz = ref_freq_kHz_val * 1e3
+
+    # Shifted frequencies (Angular Hz)
+    # User's omega_k = omega - shift
+    omegas_shifted_rad = 2 * np.pi * (omegas_Hz - ref_freq_Hz)
+
+    # Setup chain with these shifted frequencies as the Hamiltonian frequencies
+    print("Initializing 10-Ion Chain...")
+    print(f"Using Shifted Frequencies (e.g., Max: {np.max(omegas_shifted_rad)/(2*np.pi)/1e6:.4f} MHz)")
+    chain = LinearChain.from_data(dz, omegas_shifted_rad)
+
     # 1. Calculation of Eigenvectors (b_jk)
-    # This must strictly follow the user's snippet logic where inputs are treated as is.
-    # The snippet calculates omx using the raw values (interpreted as kHz? or Hz in that context?)
-    # But to get the correct mode structure, we replicate the snippet's omx calculation.
-    # Snippet: omega = 2*pi*array(...). omx = max(omega) - 2*pi*240020.3.
-    # So we use the Angular Hz values of the raw inputs.
+    # We must calculate this using the RAW frequency scale (kHz inputs treated as is, resulting in small omx)
+    # to be consistent with the user's snippet and hardcoded 'coef'.
+    # If we use the MHz scale here, omx^2 becomes huge and dominates V, leading to localized modes (bad).
+
+    # Use RAW angular frequencies for Mode Calculation
     omegas_raw_rad = 2 * np.pi * omegas_kHz_val
     ref_freq_raw_rad = 2 * np.pi * ref_freq_kHz_val
-    omx_for_calc = np.max(omegas_raw_rad) - ref_freq_raw_rad
+    omx_calc_rad = np.max(omegas_raw_rad) - ref_freq_raw_rad # Approx 2.4 kHz (angular)
 
-    print("Initializing 10-Ion Chain...")
-    # Initialize chain with placeholders (frequencies will be overwritten)
-    chain = LinearChain.from_data(dz, omegas_raw_rad)
-
-    # Compute eigenvectors using the raw difference omx
-    chain.compute_transverse_modes(omx_for_calc)
+    # Compute eigenvectors using the raw difference omx (Low Frequency Scale)
+    chain.compute_transverse_modes(omx_calc_rad)
     _, evecs = chain.get_modes()
     chain.eigenvectors = evecs
 
-    # 2. Calculation of Hamiltonian Frequencies
-    # "frequency units is kHz" implies the difference (242412 - 240020 = 2392) is 2392 kHz = 2.392 MHz.
-    # So we scale the difference by 1000 to get Hz, then 2*pi for Angular Hz.
-    # difference_kHz = omegas_kHz_val - ref_freq_kHz_val
-    # difference_Hz = difference_kHz * 1e3
-    # omegas_hamiltonian_rad = 2 * np.pi * difference_Hz
-
-    omegas_shifted_kHz = omegas_kHz_val - ref_freq_kHz_val
-    omegas_hamiltonian_rad = 2 * np.pi * omegas_shifted_kHz * 1e3 # Convert kHz diff to Hz -> rad/s
-
-    # Update chain frequencies for the physics module
-    chain.frequencies = omegas_hamiltonian_rad
+    # 2. Setup Frequencies for Hamiltonian (Physical Scale)
+    # The physical system should have bandwidth ~ MHz to match the weak coupling expectation.
+    # User's "kHz units" comment implies the *difference* is in kHz -> scaled to MHz.
+    # Or frequencies are MHz.
+    # Current best guess: 242412 is kHz. Difference is 2.4 MHz.
+    chain.frequencies = omegas_shifted_rad # This is the MHz scale (calculated above)
 
     # Simulation Parameters
     Omega = 2 * np.pi * 400e3 # 400 kHz -> 2*pi*400000 rad/s
     eta = 0.06
 
-    # Heatmap
-    w_center = np.mean(omegas_hamiltonian_rad)
-    print("Generating J_ij Heatmap...")
-    sys = SpinBosonSystem(chain, w_center, Omega)
-    sys.eta_k = np.full(chain.N, eta)
-
-    J = sys.calculate_coupling_matrix(w_center)
-
-    plt.figure(figsize=(6, 5))
-    plt.imshow(J, cmap='viridis', origin='lower')
-    plt.title(r'Coupling Matrix $J_{ij}$ at Center of Band' + '\n' + r'(10 Ions, $\Omega$=400kHz, $\eta$=0.06)')
-    plt.colorbar(label='Strength (rad/s?)')
-    plt.xlabel('Ion Index')
+    # ---------------------------
+    # New Plot 1: Mode Structure (b_ik)
+    # ---------------------------
+    plt.figure(figsize=(8, 6))
+    # chain.eigenvectors is (N_ions, N_modes)
+    # The provided omegas are sorted high to low.
+    # Our get_modes() returns sorted high to low.
+    # Mode 0 is COM (High freq). Mode 9 is Zigzag (Low freq).
+    plt.imshow(chain.eigenvectors, cmap='coolwarm', aspect='auto', origin='upper')
+    plt.colorbar(label='Amplitude $b_{ik}$')
+    plt.xlabel('Mode Index (0=COM, High Freq)')
     plt.ylabel('Ion Index')
-    plt.savefig('J_ij_10ions.png')
-    print("Saved J_ij_10ions.png")
+    plt.title('Transverse Mode Structure ($b_{ik}$)')
+    plt.savefig('Mode_Structure_b_ik.png')
+    print("Saved Mode_Structure_b_ik.png")
 
-    # Dynamics
-    print("Simulating Dynamics...")
-    ions = [4, 5]
-
-    detuning_kHz = 0.0
-    sys.Delta = omegas_hamiltonian_rad[0] + 2 * np.pi * detuning_kHz * 1e3
+    # ---------------------------
+    # New Plot 2: Spectrum
+    # ---------------------------
+    plt.figure(figsize=(8, 4))
+    freqs_MHz = omegas_shifted_rad / (2*np.pi) / 1e6
+    plt.stem(range(10), freqs_MHz)
+    plt.xlabel('Mode Index')
+    plt.ylabel('Frequency (MHz)')
+    plt.title('Phonon Mode Spectrum')
+    plt.grid(True, alpha=0.3)
+    plt.savefig('Spectrum.png')
+    print("Saved Spectrum.png")
 
     # Physics parameters check
     coupling_g = eta * Omega / (2*np.pi) # in Hz
-    bandwidth = (omegas_hamiltonian_rad[0] - omegas_hamiltonian_rad[-1]) / (2*np.pi) # in Hz
+    bandwidth = (omegas_shifted_rad[0] - omegas_shifted_rad[-1]) / (2*np.pi) # in Hz
+    w_center = np.mean(omegas_shifted_rad)
     mode_freq_MHz = w_center / (2*np.pi) / 1e6
 
     print(f"\n--- Simulation Parameters ---")
@@ -177,68 +189,96 @@ def run_simulation():
     print(f"Phonon Bandwidth: {bandwidth/1e3:.2f} kHz")
     print(f"Ratio g / Bandwidth: {coupling_g/bandwidth:.2f}")
     print(f"Ratio g / ModeFreq: {coupling_g / (mode_freq_MHz*1e6):.4f}")
-    print(f"Detuning from COM: {detuning_kHz:.2f} kHz")
-
-    if coupling_g < bandwidth * 0.1:
-         print("Regime: Weak Coupling (Markovian decay expected).")
-    elif coupling_g > bandwidth * 10:
-         print("Regime: Strong Coupling (Coherent oscillations).")
-    else:
-         print("Regime: Intermediate Coupling.")
     print("-----------------------------\n")
 
-    # Print b_jk for user verification
-    print("Coupling coefficients b_jk (for selected ions and top 3 modes):")
-    for ion_idx in ions:
-        print(f"Ion {ion_idx}: {chain.eigenvectors[ion_idx, :3]}")
-
-    t_max = 300e-6 # 300 us
+    sys = SpinBosonSystem(chain, w_center, Omega)
+    sys.eta_k = np.full(chain.N, eta)
+    ions = [4, 5]
+    t_max = 300e-6
     t_points = np.linspace(0, t_max, 300)
 
-    # Use Bell state initialization as requested
-    rhos = sys.simulate_dynamics(ions, t_points, initial_state_type='bell')
+    # Function to run simulation for a given detuning
+    def simulate_scenario(detuning_kHz, label):
+        print(f"Simulating Scenario: {label} (Detuning = {detuning_kHz:.2f} kHz)...")
 
-    # Analyze
-    C12_vals = []
-    EoF_vals = []
-    QD_vals = []
+        # J_ij for this scenario (evaluated at probe frequency)
+        omega_probe = omegas_shifted_rad[0] + 2 * np.pi * detuning_kHz * 1e3
 
-    for rho in rhos:
-        # C12 = <z1 z2> - <z1><z2>
-        z1_exp = rho[0,0] + rho[1,1] - rho[2,2] - rho[3,3]
-        z2_exp = rho[0,0] - rho[1,1] + rho[2,2] - rho[3,3]
-        z1z2_exp = rho[0,0] - rho[1,1] - rho[2,2] + rho[3,3]
+        # Calculate J
+        # Update sys.Delta to match the probe/laser frame
+        sys.Delta = omega_probe
 
-        C12_vals.append(np.real(z1z2_exp - z1_exp*z2_exp))
-        EoF_vals.append(eof(rho))
-        QD_vals.append(quantum_discord(rho))
+        J = sys.calculate_coupling_matrix(omega_probe)
 
-    # Plot Dynamics
+        plt.figure(figsize=(6, 5))
+        plt.imshow(J, cmap='viridis', origin='lower')
+        plt.title(rf'Coupling Matrix $J_{{ij}}$ ({label})' + '\n' + rf'($\Delta = {detuning_kHz:.1f}$ kHz)')
+        plt.colorbar(label='Strength (rad/s)')
+        plt.xlabel('Ion Index')
+        plt.ylabel('Ion Index')
+        plt.savefig(f'J_ij_{label}.png')
+        print(f"Saved J_ij_{label}.png")
+
+        # Dynamics
+        rhos = sys.simulate_dynamics(ions, t_points, initial_state_type='bell')
+
+        # Analyze
+        C12 = []
+        E = []
+        Q = []
+        for rho in rhos:
+            z1_exp = rho[0,0] + rho[1,1] - rho[2,2] - rho[3,3]
+            z2_exp = rho[0,0] - rho[1,1] + rho[2,2] - rho[3,3]
+            z1z2_exp = rho[0,0] - rho[1,1] - rho[2,2] + rho[3,3]
+            C12.append(np.real(z1z2_exp - z1_exp*z2_exp))
+            E.append(eof(rho))
+            Q.append(quantum_discord(rho))
+
+        return np.array(C12), np.array(E), np.array(Q)
+
+    # 1. Dense Region (Near COM / High Freq)
+    # Detuning = 0 (Resonant with Mode 0 - Highest Freq)
+    # The modes are denser near the top (differences ~11kHz) vs bottom (differences ~30kHz).
+    C_dense, E_dense, Q_dense = simulate_scenario(0.0, "Dense")
+
+    # 2. Sparse Region (Near Zigzag / Low Freq)
+    # Detuning = Bandwidth (Resonant with Mode 9 - Lowest Freq)
+    # omegas_shifted_rad[0] is High. omegas_shifted_rad[-1] is Low.
+    # We want sys.Delta = omegas_shifted_rad[-1]
+    # omegas_shifted_rad[-1] = omegas_shifted_rad[0] + 2*pi*diff
+    # diff = (omegas[-1] - omegas[0])
+    detuning_sparse_kHz = (omegas_shifted_rad[-1] - omegas_shifted_rad[0]) / (2*np.pi) / 1e3
+    C_sparse, E_sparse, Q_sparse = simulate_scenario(detuning_sparse_kHz, "Sparse")
+
+    # Comparison Plot
     fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
-    # 1. Connected Correlator (Measurable in Experiment)
-    axes[0].plot(t_points*1e6, C12_vals, color='b', label=r'$C_{zz} = \langle \sigma_z^1 \sigma_z^2 \rangle - \langle \sigma_z^1 \rangle \langle \sigma_z^2 \rangle$')
+    # Czz
+    axes[0].plot(t_points*1e6, C_dense, 'b-', label='Dense (COM)')
+    axes[0].plot(t_points*1e6, C_sparse, 'r--', label='Sparse (Edge)')
     axes[0].set_ylabel(r'$C_{zz}$')
-    axes[0].set_title(f'Experimentally Measurable Correlation ($C_{{zz}}$)\nResonant with COM ($\Delta = \omega_{{COM}}$)')
+    axes[0].set_title(r'Experimentally Measurable Correlation ($C_{zz}$)')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    # 2. Entanglement of Formation
-    axes[1].plot(t_points*1e6, EoF_vals, color='g')
+    # EoF
+    axes[1].plot(t_points*1e6, E_dense, 'b-', label='Dense')
+    axes[1].plot(t_points*1e6, E_sparse, 'r--', label='Sparse')
     axes[1].set_ylabel('Entanglement of Formation')
     axes[1].set_title('Quantum Entanglement')
     axes[1].grid(True, alpha=0.3)
 
-    # 3. Quantum Discord
-    axes[2].plot(t_points*1e6, QD_vals, color='r')
+    # Discord
+    axes[2].plot(t_points*1e6, Q_dense, 'b-', label='Dense')
+    axes[2].plot(t_points*1e6, Q_sparse, 'r--', label='Sparse')
     axes[2].set_ylabel('Quantum Discord')
     axes[2].set_xlabel(r'Time ($\mu$s)')
-    axes[2].set_title('Quantum Discord (Total Non-Classical Correlation)')
+    axes[2].set_title('Quantum Discord')
     axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('Dynamics_10ions.png')
-    print("Saved Dynamics_10ions.png")
+    plt.savefig('Dynamics_Comparison.png')
+    print("Saved Dynamics_Comparison.png")
 
 if __name__ == "__main__":
     run_simulation()
