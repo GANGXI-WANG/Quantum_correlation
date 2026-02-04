@@ -1,13 +1,11 @@
+```mermaid
 graph TD
     %% --- 样式定义 ---
-    %% 现有技术/通用硬件：细边框，白底
     classDef existing fill:#fff,stroke:#000,stroke-width:1px;
-    %% 本提案新增/创新模块：粗边框，突出显示
     classDef novel fill:#fff,stroke:#000,stroke-width:4px;
-    %% 虚线框用于分组
     classDef cluster fill:#fff,stroke:#000,stroke-width:2px,stroke-dasharray: 5 5;
 
-    %% --- 第一层：物理硬件层（现有技术基础） ---
+    %% --- 第一层：物理硬件层 (现有基础) ---
     subgraph Layer1 [100 物理硬件层 (现有基础)]
         direction LR
         A[110 离子阱装置<br>线性链拓扑]:::existing --> B[120 探测/冷却<br>激光系统]:::existing
@@ -20,7 +18,6 @@ graph TD
     %% --- 第二层：计算处理流水线层（本提案新增的核心创新） ---
     subgraph Layer2 [200 核心创新：计算处理流水线层]
         direction TB
-        %% 核心模块均使用 novel 样式
         D[210 图像张量<br>构建模块]:::novel --> E[220 鲁棒主成分分析<br>RPCA 处理器]:::novel
         
         E -- 稀疏信号矩阵 --> F[230 拓扑约束<br>弹性网格配准引擎]:::novel
@@ -51,3 +48,4 @@ graph TD
     style Layer1 fill:#fafafa,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
     style Layer2 fill:#fff,stroke:#000,stroke-width:2px
     style Layer3 fill:#fafafa,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
+```style Layer3 fill:#fafafa,stroke:#666,stroke-width:1px,stroke-dasharray: 5 5
